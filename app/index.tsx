@@ -132,20 +132,19 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const [browserVisible, setBrowserVisible] = useState(false);
-  const [webViewLoaded, setWebViewLoaded] = useState(false);
-  const [preloadWebView, setPreloadWebView] = useState(true);
+  
+  const [webViewReady, setWebViewReady] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;
   const [storedSession, setStoredSession] = useState<{ cookies: string; localStorage: Record<string, string> } | null>(null);
   const webViewRef = useRef<WebView>(null);
 
   useEffect(() => {
     loadStoredSession();
-    setPreloadWebView(true);
   }, []);
 
   const handleWebViewLoad = useCallback(() => {
     console.log('WebView finished loading');
-    setWebViewLoaded(true);
+    setWebViewReady(true);
   }, []);
 
   const loadStoredSession = async () => {
@@ -252,25 +251,9 @@ export default function HomeScreen() {
         Powered by Circle
       </Text>
 
-      <Modal
-        visible={browserVisible}
-        animationType="none"
-        transparent
-        onRequestClose={closeBrowser}
-      >
-        <Animated.View 
-          style={[
-            styles.modalContainer,
-            {
-              transform: [{
-                translateY: slideAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [800, 0],
-                }),
-              }],
-            },
-          ]}
-        >
+      {/* Always-mounted WebView for instant loading */}
+      {Platform.OS !== 'web' && (
+        <View style={[styles.persistentWebViewContainer, browserVisible && styles.persistentWebViewVisible]}>
           <View style={[styles.browserHeader, { paddingTop: insets.top + 8 }]}>
             <TouchableOpacity
               onPress={closeBrowser}
@@ -283,67 +266,69 @@ export default function HomeScreen() {
             <View style={styles.closeButton} />
           </View>
           
-          {Platform.OS === 'web' ? (
+          <View style={styles.webviewWrapper}>
+            {!webViewReady && browserVisible && (
+              <View style={styles.loadingOverlay}>
+                <AnimatedSpinner />
+              </View>
+            )}
+            <View style={styles.webviewContainer}>
+              <WebView
+                ref={webViewRef}
+                source={{ uri: COMMUNITY_URL }}
+                style={styles.webview}
+                javaScriptEnabled
+                domStorageEnabled
+                sharedCookiesEnabled={true}
+                thirdPartyCookiesEnabled={true}
+                cacheEnabled={true}
+                cacheMode="LOAD_CACHE_ELSE_NETWORK"
+                injectedJavaScriptBeforeContentLoaded={createInjectSessionScript(storedSession)}
+                injectedJavaScript={EXTRACT_SESSION_SCRIPT}
+                onMessage={handleWebViewMessage}
+                onLoadEnd={handleWebViewLoad}
+                startInLoadingState={false}
+              />
+            </View>
+            <View style={[styles.browserFooter, { paddingBottom: insets.bottom }]} />
+          </View>
+        </View>
+      )}
+
+      {/* Web platform fallback modal */}
+      {Platform.OS === 'web' && (
+        <Modal
+          visible={browserVisible}
+          animationType="slide"
+          transparent
+          onRequestClose={closeBrowser}
+        >
+          <View style={styles.modalContainer}>
+            <View style={[styles.browserHeader, { paddingTop: insets.top + 8 }]}>
+              <TouchableOpacity
+                onPress={closeBrowser}
+                style={styles.closeButton}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <X size={24} color="#000000" />
+              </TouchableOpacity>
+              <Text style={styles.browserTitle}>Community</Text>
+              <View style={styles.closeButton} />
+            </View>
             <View style={styles.webFallback}>
               <AnimatedSpinner />
-              <Text style={styles.loadingText}>Loading Community...</Text>
-              {browserVisible && (
-                <TouchableOpacity
-                  style={styles.webLinkButton}
-                  onPress={() => {
-                    window.open(COMMUNITY_URL, '_blank');
-                    closeBrowser();
-                  }}
-                >
-                  <Text style={styles.webLinkText}>Open in Browser</Text>
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity
+                style={styles.webLinkButton}
+                onPress={() => {
+                  window.open(COMMUNITY_URL, '_blank');
+                  closeBrowser();
+                }}
+              >
+                <Text style={styles.webLinkText}>Open in Browser</Text>
+              </TouchableOpacity>
             </View>
-          ) : (
-            <View style={styles.webviewWrapper}>
-              {!webViewLoaded && (
-                <View style={styles.loadingOverlay}>
-                  <AnimatedSpinner />
-                  <Text style={styles.loadingText}>Loading Community...</Text>
-                </View>
-              )}
-              <View style={styles.webviewContainer}>
-                <WebView
-                  ref={webViewRef}
-                  source={{ uri: COMMUNITY_URL }}
-                  style={styles.webview}
-                  javaScriptEnabled
-                  domStorageEnabled
-                  sharedCookiesEnabled={true}
-                  thirdPartyCookiesEnabled={true}
-                  injectedJavaScriptBeforeContentLoaded={createInjectSessionScript(storedSession)}
-                  injectedJavaScript={EXTRACT_SESSION_SCRIPT}
-                  onMessage={handleWebViewMessage}
-                  onLoadEnd={handleWebViewLoad}
-                />
-              </View>
-              <View style={[styles.browserFooter, { paddingBottom: insets.bottom }]} />
-            </View>
-          )}
-        </Animated.View>
-      </Modal>
-
-      {/* Preload WebView in background */}
-      {Platform.OS !== 'web' && preloadWebView && !browserVisible && (
-        <View style={styles.hiddenWebView}>
-          <WebView
-            source={{ uri: COMMUNITY_URL }}
-            javaScriptEnabled
-            domStorageEnabled
-            sharedCookiesEnabled={true}
-            thirdPartyCookiesEnabled={true}
-            injectedJavaScriptBeforeContentLoaded={createInjectSessionScript(storedSession)}
-            onLoadEnd={() => {
-              console.log('Preload WebView loaded');
-              setWebViewLoaded(true);
-            }}
-          />
-        </View>
+          </View>
+        </Modal>
       )}
     </View>
   );
@@ -457,12 +442,20 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  hiddenWebView: {
+  persistentWebViewContainer: {
     position: 'absolute',
-    width: 1,
-    height: 1,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#FFFFFF',
+    transform: [{ translateY: 2000 }],
     opacity: 0,
-    overflow: 'hidden',
+  },
+  persistentWebViewVisible: {
+    transform: [{ translateY: 0 }],
+    opacity: 1,
+    zIndex: 100,
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -481,11 +474,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  loadingText: {
-    fontSize: 16,
-    color: Colors.textSecondary,
-    marginTop: 16,
-  },
+  
   webFallback: {
     flex: 1,
     alignItems: "center",
