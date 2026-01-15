@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View, TouchableOpacity, Animated, Modal, Platform } from "react-native";
+import { StyleSheet, Text, View, TouchableOpacity, Animated, Modal, Platform, Easing } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ExternalLink, Users, X } from "lucide-react-native";
 import { WebView, WebViewMessageEvent } from "react-native-webview";
@@ -72,16 +72,80 @@ true;
 `;
 };
 
+function AnimatedSpinner() {
+  const spinAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const spin = Animated.loop(
+      Animated.timing(spinAnim, {
+        toValue: 1,
+        duration: 1500,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.1,
+          duration: 800,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 800,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    spin.start();
+    pulse.start();
+    return () => {
+      spin.stop();
+      pulse.stop();
+    };
+  }, [spinAnim, pulseAnim]);
+
+  const rotate = spinAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  return (
+    <Animated.View
+      style={[
+        styles.spinnerContainer,
+        {
+          transform: [{ rotate }, { scale: pulseAnim }],
+        },
+      ]}
+    >
+      <Users size={40} color={Colors.primary} strokeWidth={1.5} />
+    </Animated.View>
+  );
+}
+
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const [browserVisible, setBrowserVisible] = useState(false);
+  const [webViewLoaded, setWebViewLoaded] = useState(false);
+  const [preloadWebView, setPreloadWebView] = useState(true);
   const slideAnim = useRef(new Animated.Value(0)).current;
   const [storedSession, setStoredSession] = useState<{ cookies: string; localStorage: Record<string, string> } | null>(null);
   const webViewRef = useRef<WebView>(null);
 
   useEffect(() => {
     loadStoredSession();
+    setPreloadWebView(true);
+  }, []);
+
+  const handleWebViewLoad = useCallback(() => {
+    console.log('WebView finished loading');
+    setWebViewLoaded(true);
   }, []);
 
   const loadStoredSession = async () => {
@@ -213,7 +277,7 @@ export default function HomeScreen() {
               style={styles.closeButton}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
-              <X size={24} color={Colors.text} />
+              <X size={24} color="#000000" />
             </TouchableOpacity>
             <Text style={styles.browserTitle}>Community</Text>
             <View style={styles.closeButton} />
@@ -221,38 +285,66 @@ export default function HomeScreen() {
           
           {Platform.OS === 'web' ? (
             <View style={styles.webFallback}>
-              <Text style={styles.webFallbackText}>Opening in new tab...</Text>
+              <AnimatedSpinner />
+              <Text style={styles.loadingText}>Loading Community...</Text>
               {browserVisible && (
-                <Text 
-                  style={styles.webLink}
+                <TouchableOpacity
+                  style={styles.webLinkButton}
                   onPress={() => {
                     window.open(COMMUNITY_URL, '_blank');
                     closeBrowser();
                   }}
                 >
-                  Click here if not redirected
-                </Text>
+                  <Text style={styles.webLinkText}>Open in Browser</Text>
+                </TouchableOpacity>
               )}
             </View>
           ) : (
-            <View style={[styles.webviewContainer, { paddingBottom: insets.bottom }]}>
-              <WebView
-                ref={webViewRef}
-                source={{ uri: COMMUNITY_URL }}
-                style={styles.webview}
-                startInLoadingState
-                javaScriptEnabled
-                domStorageEnabled
-                sharedCookiesEnabled={true}
-                thirdPartyCookiesEnabled={true}
-                injectedJavaScriptBeforeContentLoaded={createInjectSessionScript(storedSession)}
-                injectedJavaScript={EXTRACT_SESSION_SCRIPT}
-                onMessage={handleWebViewMessage}
-              />
+            <View style={styles.webviewWrapper}>
+              {!webViewLoaded && (
+                <View style={styles.loadingOverlay}>
+                  <AnimatedSpinner />
+                  <Text style={styles.loadingText}>Loading Community...</Text>
+                </View>
+              )}
+              <View style={styles.webviewContainer}>
+                <WebView
+                  ref={webViewRef}
+                  source={{ uri: COMMUNITY_URL }}
+                  style={styles.webview}
+                  javaScriptEnabled
+                  domStorageEnabled
+                  sharedCookiesEnabled={true}
+                  thirdPartyCookiesEnabled={true}
+                  injectedJavaScriptBeforeContentLoaded={createInjectSessionScript(storedSession)}
+                  injectedJavaScript={EXTRACT_SESSION_SCRIPT}
+                  onMessage={handleWebViewMessage}
+                  onLoadEnd={handleWebViewLoad}
+                />
+              </View>
+              <View style={[styles.browserFooter, { paddingBottom: insets.bottom }]} />
             </View>
           )}
         </Animated.View>
       </Modal>
+
+      {/* Preload WebView in background */}
+      {Platform.OS !== 'web' && preloadWebView && !browserVisible && (
+        <View style={styles.hiddenWebView}>
+          <WebView
+            source={{ uri: COMMUNITY_URL }}
+            javaScriptEnabled
+            domStorageEnabled
+            sharedCookiesEnabled={true}
+            thirdPartyCookiesEnabled={true}
+            injectedJavaScriptBeforeContentLoaded={createInjectSessionScript(storedSession)}
+            onLoadEnd={() => {
+              console.log('Preload WebView loaded');
+              setWebViewLoaded(true);
+            }}
+          />
+        </View>
+      )}
     </View>
   );
 }
@@ -334,9 +426,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingBottom: 12,
-    backgroundColor: Colors.surface,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: '#E5E5E5',
   },
   closeButton: {
     width: 40,
@@ -347,7 +439,15 @@ const styles = StyleSheet.create({
   browserTitle: {
     fontSize: 17,
     fontWeight: "600" as const,
-    color: Colors.text,
+    color: '#000000',
+  },
+  browserFooter: {
+    backgroundColor: '#FFFFFF',
+    minHeight: 20,
+  },
+  webviewWrapper: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
   },
   webviewContainer: {
     flex: 1,
@@ -355,19 +455,53 @@ const styles = StyleSheet.create({
   },
   webview: {
     flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  hiddenWebView: {
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    opacity: 0,
+    overflow: 'hidden',
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  spinnerContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 20,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  loadingText: {
+    fontSize: 16,
+    color: Colors.textSecondary,
+    marginTop: 16,
   },
   webFallback: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: '#FFFFFF',
   },
-  webFallbackText: {
-    fontSize: 16,
-    color: Colors.textSecondary,
+  webLinkButton: {
+    marginTop: 24,
+    backgroundColor: Colors.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 10,
   },
-  webLink: {
+  webLinkText: {
     fontSize: 16,
-    color: Colors.primary,
-    marginTop: 12,
+    color: '#FFFFFF',
+    fontWeight: '600' as const,
   },
 });
