@@ -235,19 +235,21 @@ export default function HomeScreen() {
               )}
             </View>
           ) : (
-            <WebView
-              ref={webViewRef}
-              source={{ uri: COMMUNITY_URL }}
-              style={styles.webview}
-              startInLoadingState
-              javaScriptEnabled
-              domStorageEnabled
-              sharedCookiesEnabled={true}
-              thirdPartyCookiesEnabled={true}
-              injectedJavaScriptBeforeContentLoaded={createInjectSessionScript(storedSession)}
-              injectedJavaScript={EXTRACT_SESSION_SCRIPT}
-              onMessage={handleWebViewMessage}
-            />
+            <View style={[styles.webviewContainer, { paddingBottom: insets.bottom }]}>
+              <WebView
+                ref={webViewRef}
+                source={{ uri: COMMUNITY_URL }}
+                style={styles.webview}
+                startInLoadingState
+                javaScriptEnabled
+                domStorageEnabled
+                sharedCookiesEnabled={true}
+                thirdPartyCookiesEnabled={true}
+                injectedJavaScriptBeforeContentLoaded={createInjectSessionScript(storedSession)}
+                injectedJavaScript={EXTRACT_SESSION_SCRIPT}
+                onMessage={handleWebViewMessage}
+              />
+            </View>
           )}
         </Animated.View>
       </Modal>
@@ -346,6 +348,10 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "600" as const,
     color: Colors.text,
+  },
+  webviewContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
   },
   webview: {
     flex: 1,
