@@ -1,18 +1,117 @@
 import { StyleSheet, Text, View, TouchableOpacity, Animated, Modal, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ExternalLink, Users, X } from "lucide-react-native";
-import { WebView } from "react-native-webview";
-import { useRef, useCallback, useState } from "react";
+import { WebView, WebViewMessageEvent } from "react-native-webview";
+import { useRef, useCallback, useState, useEffect } from "react";
 import * as Haptics from "expo-haptics";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Colors from "@/constants/colors";
 
 const COMMUNITY_URL = "https://bornofambition.circle.so/";
+const STORAGE_KEY = "webview_session_data";
+
+const EXTRACT_SESSION_SCRIPT = `
+(function() {
+  function extractAndSend() {
+    try {
+      const sessionData = {
+        cookies: document.cookie,
+        localStorage: {},
+        timestamp: Date.now()
+      };
+      
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key) {
+          sessionData.localStorage[key] = localStorage.getItem(key);
+        }
+      }
+      
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        type: 'SESSION_DATA',
+        data: sessionData
+      }));
+    } catch (e) {
+      console.log('Extract error:', e);
+    }
+  }
+  
+  // Extract on page load and periodically
+  extractAndSend();
+  setInterval(extractAndSend, 5000);
+  
+  // Also extract on any storage change
+  window.addEventListener('storage', extractAndSend);
+})();
+true;
+`;
+
+const createInjectSessionScript = (sessionData: { cookies: string; localStorage: Record<string, string> } | null) => {
+  if (!sessionData) return '';
+  
+  const localStorageEntries = Object.entries(sessionData.localStorage || {})
+    .map(([key, value]) => `localStorage.setItem('${key.replace(/'/g, "\\'")}',' ${String(value).replace(/'/g, "\\'")}');`)
+    .join('\n');
+  
+  const cookieStatements = (sessionData.cookies || '').split(';')
+    .filter(c => c.trim())
+    .map(cookie => `document.cookie = '${cookie.trim().replace(/'/g, "\\'")}; path=/; SameSite=Lax';`)
+    .join('\n');
+  
+  return `
+(function() {
+  try {
+    ${localStorageEntries}
+    ${cookieStatements}
+    console.log('Session data restored');
+  } catch (e) {
+    console.log('Restore error:', e);
+  }
+})();
+true;
+`;
+};
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const [browserVisible, setBrowserVisible] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;
+  const [storedSession, setStoredSession] = useState<{ cookies: string; localStorage: Record<string, string> } | null>(null);
+  const webViewRef = useRef<WebView>(null);
+
+  useEffect(() => {
+    loadStoredSession();
+  }, []);
+
+  const loadStoredSession = async () => {
+    try {
+      const stored = await AsyncStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        console.log('Loaded stored session data');
+        setStoredSession(parsed);
+      }
+    } catch (e) {
+      console.log('Error loading session:', e);
+    }
+  };
+
+  const handleWebViewMessage = useCallback(async (event: WebViewMessageEvent) => {
+    try {
+      const message = JSON.parse(event.nativeEvent.data);
+      if (message.type === 'SESSION_DATA') {
+        const sessionData = message.data;
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({
+          cookies: sessionData.cookies,
+          localStorage: sessionData.localStorage
+        }));
+        console.log('Session data saved to storage');
+      }
+    } catch (e) {
+      console.log('Error handling message:', e);
+    }
+  }, []);
 
   const handlePressIn = useCallback(() => {
     Animated.spring(scaleAnim, {
@@ -137,11 +236,17 @@ export default function HomeScreen() {
             </View>
           ) : (
             <WebView
+              ref={webViewRef}
               source={{ uri: COMMUNITY_URL }}
               style={styles.webview}
               startInLoadingState
               javaScriptEnabled
               domStorageEnabled
+              sharedCookiesEnabled={true}
+              thirdPartyCookiesEnabled={true}
+              injectedJavaScriptBeforeContentLoaded={createInjectSessionScript(storedSession)}
+              injectedJavaScript={EXTRACT_SESSION_SCRIPT}
+              onMessage={handleWebViewMessage}
             />
           )}
         </Animated.View>
